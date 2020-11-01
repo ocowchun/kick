@@ -1,6 +1,11 @@
 package kick
 
-import "github.com/google/uuid"
+import (
+	"errors"
+	"fmt"
+
+	"github.com/google/uuid"
+)
 
 type Worker struct {
 	ID         uuid.UUID
@@ -20,7 +25,17 @@ func (w *Worker) Run(perform func(arguments interface{}) error, job *Job) {
 		job:    job,
 	}
 
-	result.err = perform(job.Arguments)
+	result.err = runPerform(perform, job.Arguments)
 	result.completed = result.err == nil
 	w.workerDone <- result
+}
+
+func runPerform(perform func(arguments interface{}) error, arguments interface{}) (err error) {
+	defer func() {
+		if e := recover(); e != nil {
+			err = errors.New(fmt.Sprintln(e))
+		}
+	}()
+	err = perform(arguments)
+	return err
 }
