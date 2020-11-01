@@ -3,6 +3,7 @@ package kick
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/go-redis/redis"
@@ -11,18 +12,20 @@ import (
 // Fetcher is responsible to fetch jobs from redis
 type Fetcher struct {
 	stopFetch   chan bool
-	shouldFetch chan bool
 	redisClient *redis.Client
+	*sync.WaitGroup
 }
 
 func NewFetcher(redisClient *redis.Client) *Fetcher {
 	return &Fetcher{
-		stopFetch:   make(chan bool),
-		redisClient: redisClient,
+		make(chan bool),
+		redisClient,
+		&sync.WaitGroup{},
 	}
 }
 
 func (f *Fetcher) Run(s *Server) {
+	f.Add(1)
 	go f.fetchJobs(s)
 }
 
@@ -37,6 +40,7 @@ func (f *Fetcher) fetchJobs(s *Server) {
 		select {
 		case <-f.stopFetch:
 			fmt.Println("Gracefully shutting fetcher")
+			f.Done()
 			return
 		case <-time.After(1 * time.Second):
 			fmt.Println("fetchJobs")
@@ -67,16 +71,20 @@ type Poller struct {
 	queue       *Queue
 	redisClient *redis.Client
 	stopPoll    chan bool
+	*sync.WaitGroup
 }
 
 func NewPoller(queue *Queue) *Poller {
 	return &Poller{
-		queue:       queue,
-		redisClient: queue.redisClient,
+		queue,
+		queue.redisClient,
+		make(chan bool),
+		&sync.WaitGroup{},
 	}
 }
 
 func (p *Poller) Run() {
+	p.Add(1)
 	go p.poll()
 }
 
@@ -90,6 +98,7 @@ func (p *Poller) poll() {
 		select {
 		case <-p.stopPoll:
 			fmt.Println("Gracefully shutting poller")
+			p.Done()
 			return
 		case <-time.After(1 * time.Second):
 			z := redis.ZRangeBy{
@@ -144,10 +153,11 @@ func (q *Queue) Run(server *Server) {
 	q.poller.Run()
 }
 
-// TODO: ensure all component gracefully shutdown
 func (q *Queue) Close() {
 	go q.fetcher.Close()
 	go q.poller.Close()
+	q.fetcher.Wait()
+	q.poller.Wait()
 }
 
 func (q *Queue) EnqueueJob(performAt time.Time, job *Job) error {
