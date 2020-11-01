@@ -113,13 +113,13 @@ func (s *Server) handleWorkerDone(jobResult *JobResult) {
 	s.idleWorkers = append(s.idleWorkers, jobResult.worker)
 	if jobResult.completed {
 		fmt.Printf("Complete job %s\n", jobResult.job.ID)
-		s.queue.removeJobFromInprogress(jobResult.job)
+		s.queue.RemoveJobFromInprogress(jobResult.job)
 	} else {
 		job := jobResult.job
 
 		fmt.Printf("Failed job %s\n", job.ID)
 		if job.Retry && job.RetryCount < maxRetryCount {
-			s.queue.removeJobFromInprogress(jobResult.job)
+			s.queue.RemoveJobFromInprogress(jobResult.job)
 		} else if job.RetryCount == maxRetryCount {
 			fmt.Printf("Job %s failed to much time \n", job.ID)
 		}

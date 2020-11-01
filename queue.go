@@ -11,15 +11,17 @@ import (
 
 // Fetcher is responsible to fetch jobs from redis
 type Fetcher struct {
+	queue       *Queue
 	stopFetch   chan bool
 	redisClient *redis.Client
 	*sync.WaitGroup
 }
 
-func NewFetcher(redisClient *redis.Client) *Fetcher {
+func NewFetcher(queue *Queue) *Fetcher {
 	return &Fetcher{
+		queue,
 		make(chan bool),
-		redisClient,
+		queue.redisClient,
 		&sync.WaitGroup{},
 	}
 }
@@ -34,8 +36,6 @@ func (f *Fetcher) Close() {
 }
 
 func (f *Fetcher) fetchJobs(s *Server) {
-	queueName := "defaultQueue"
-	dest := queueName + "::inProgress"
 	for {
 		select {
 		case <-f.stopFetch:
@@ -47,7 +47,7 @@ func (f *Fetcher) fetchJobs(s *Server) {
 			count := len(s.idleWorkers)
 			i := 0
 			for i < count {
-				res := f.redisClient.BRPopLPush(queueName, dest, 1*time.Second)
+				res := f.redisClient.BRPopLPush(f.queue.name, f.queue.InprogressSetName(), 1*time.Second)
 				fmt.Println("fetch job")
 				bytes, err := res.Bytes()
 				if err == nil {
@@ -133,9 +133,9 @@ type Queue struct {
 func NewQueue(name string, redisClient *redis.Client) *Queue {
 	queue := &Queue{
 		name:        name,
-		fetcher:     NewFetcher(redisClient),
 		redisClient: redisClient,
 	}
+	queue.fetcher = NewFetcher(queue)
 	queue.poller = NewPoller(queue)
 	return queue
 }
@@ -179,7 +179,7 @@ func (q *Queue) EnqueueJob(performAt time.Time, job *Job) error {
 	return nil
 }
 
-func (q *Queue) removeJobFromInprogress(job *Job) {
+func (q *Queue) RemoveJobFromInprogress(job *Job) {
 	bytes, _ := json.Marshal(job)
 	q.redisClient.LRem(q.InprogressSetName(), 1, bytes)
 }
