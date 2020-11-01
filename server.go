@@ -3,16 +3,14 @@ package kick
 import (
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"github.com/go-redis/redis"
 	"github.com/google/uuid"
 )
-
-type JobDefinition interface {
-	Name() string
-	Perform(arguments interface{}) error
-	RetryAt(retryCount int) (bool, time.Duration)
-}
 
 type JobResult struct {
 	worker    *Worker
@@ -21,75 +19,62 @@ type JobResult struct {
 	err       error
 }
 
-type Worker struct {
-	ID         uuid.UUID
-	workerDone chan *JobResult
-}
-
-func NewWorker(workerDone chan *JobResult) *Worker {
-	return &Worker{
-		ID:         uuid.New(),
-		workerDone: workerDone,
-	}
-}
-
-func (w *Worker) Run(perform func(arguments interface{}) error, job *Job) {
-	result := &JobResult{
-		worker: w,
-		job:    job,
-	}
-
-	result.err = perform(job.Arguments)
-	result.completed = result.err == nil
-	w.workerDone <- result
-}
-
 type Server struct {
 	jobs             []Job
 	isRunning        bool
 	idleWorkers      []*Worker
 	workerDone       chan *JobResult
-	jobDefinitionMap map[string]JobDefinition
+	jobDefinitionMap map[string]*JobDefinition
+	redisClient      *redis.Client
+	queue            *Queue
 }
 
-func NewServer(workerCount int, jobDefinitions []JobDefinition) *Server {
+type ServerConfiguration struct {
+	WorkerCount int
+	RedisURL    string
+}
+
+func NewServer(config *ServerConfiguration, jobDefinitions []*JobDefinition) *Server {
 	i := 0
 	idleWorkers := []*Worker{}
 	workerDone := make(chan *JobResult)
-	for i < workerCount {
+	for i < config.WorkerCount {
 		idleWorkers = append(idleWorkers, NewWorker(workerDone))
 		i++
 	}
 
-	jobDefinitionMap := map[string]JobDefinition{}
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: config.RedisURL,
+		DB:   0, // use default DB
+	})
+
+	jobDefinitionMap := map[string]*JobDefinition{}
 	for _, jobDefinition := range jobDefinitions {
 		jobDefinitionMap[jobDefinition.Name()] = jobDefinition
 	}
+	queue := NewQueue("defaultQueue", redisClient)
 
 	return &Server{
 		isRunning:        false,
 		idleWorkers:      idleWorkers,
 		workerDone:       workerDone,
 		jobDefinitionMap: jobDefinitionMap,
+		redisClient:      redisClient,
+		queue:            queue,
 	}
 }
 
-type Job struct {
-	ID                uuid.UUID   `json:"id"`
-	Retry             bool        `json:"retry"`
-	RetryCount        int         `json:"retryCount"`
-	CreatedAt         time.Time   `json:"createdAt"`
-	EnqueuedAt        time.Time   `json:"enqueuedAt"`
-	Arguments         interface{} `json:"arguments"`
-	JobDefinitionName string      `json:"jobDefinitionName"`
+func (s *Server) Enqueue(jobDefinitionName string, arguments interface{}) error {
+	return s.EnqueueAt(0*time.Second, jobDefinitionName, arguments)
 }
 
-func (s *Server) Enqueue(jobDefinitionName string, arguments interface{}) error {
+func (s *Server) EnqueueAt(duration time.Duration, jobDefinitionName string, arguments interface{}) error {
+
 	jobDefinition := s.jobDefinitionMap[jobDefinitionName]
 	if jobDefinition == nil {
 		return fmt.Errorf("Can't find job definition name `%s`", jobDefinitionName)
 	}
-
+	queueName := "defaultQueue"
 	now := time.Now()
 	retry, _ := jobDefinition.RetryAt(0)
 	job := Job{
@@ -99,11 +84,9 @@ func (s *Server) Enqueue(jobDefinitionName string, arguments interface{}) error 
 		EnqueuedAt:        now,
 		JobDefinitionName: jobDefinitionName,
 		Arguments:         arguments,
+		QueueName:         queueName,
 	}
-
-	s.jobs = append(s.jobs, job)
-	return nil
-
+	return s.queue.EnqueueJob(now.Add(duration), &job)
 }
 
 func (s *Server) consumeJob() error {
@@ -115,7 +98,7 @@ func (s *Server) consumeJob() error {
 
 		jobDefinition := s.jobDefinitionMap[job.JobDefinitionName]
 		if jobDefinition == nil {
-			fmt.Printf("Can't find job definition %s", jobDefinition)
+			fmt.Printf("Can't find job definition %s", job.JobDefinitionName)
 		} else {
 			perform := jobDefinition.Perform
 			go worker.Run(perform, &job)
@@ -124,26 +107,50 @@ func (s *Server) consumeJob() error {
 	return nil
 }
 
+func (s *Server) handleWorkerDone(jobResult *JobResult) {
+	maxRetryCount := 3
+
+	s.idleWorkers = append(s.idleWorkers, jobResult.worker)
+	if jobResult.completed {
+		fmt.Printf("Complete job %s\n", jobResult.job.ID)
+		s.queue.removeJobFromInprogress(jobResult.job)
+	} else {
+		job := jobResult.job
+
+		fmt.Printf("Failed job %s\n", job.ID)
+		if job.Retry && job.RetryCount < maxRetryCount {
+			s.queue.removeJobFromInprogress(jobResult.job)
+		} else if job.RetryCount == maxRetryCount {
+			fmt.Printf("Job %s failed to much time \n", job.ID)
+		}
+	}
+}
+
 // Run kick server
 func (s *Server) Run() error {
 	if s.isRunning {
 		return errors.New("Already running")
 	}
-	s.isRunning = true
 
+	fmt.Println("kick server starting...")
+
+	s.isRunning = true
 	shouldStop := false
+	s.queue.Run(s)
+	term := make(chan os.Signal, 1)
+	signal.Notify(term, os.Interrupt, syscall.SIGTERM)
+
 	for !shouldStop {
 		select {
 		case jobResult := <-s.workerDone:
-			s.idleWorkers = append(s.idleWorkers, jobResult.worker)
-			if jobResult.completed {
-				fmt.Printf("Complete job %s\n", jobResult.job.ID)
-			} else {
-				fmt.Printf("Failed job %s\n", jobResult.job.ID)
-			}
+			s.handleWorkerDone(jobResult)
 		case <-time.After(1 * time.Second):
 			s.consumeJob()
 			fmt.Println("timeout 1")
+		case <-term:
+			fmt.Println("Gracefully shutting kick server")
+			s.queue.Close()
+			return nil
 		}
 	}
 	return nil
