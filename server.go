@@ -112,16 +112,16 @@ func (s *Server) handleWorkerDone(jobResult *JobResult) {
 
 	s.idleWorkers = append(s.idleWorkers, jobResult.worker)
 	if jobResult.completed {
-		fmt.Printf("Complete job %s\n", jobResult.job.ID)
+		fmt.Printf("Complete job %s %s\n", jobResult.job.JobDefinitionName, jobResult.job.ID)
 		s.queue.RemoveJobFromInprogress(jobResult.job)
 	} else {
 		job := jobResult.job
 
-		fmt.Printf("Failed job %s\n", job.ID)
+		fmt.Printf("Failed job %s %s\n", jobResult.job.JobDefinitionName, job.ID)
 		if job.Retry && job.RetryCount < maxRetryCount {
 			s.queue.RemoveJobFromInprogress(jobResult.job)
 		} else if job.RetryCount == maxRetryCount {
-			fmt.Printf("Job %s failed to much time \n", job.ID)
+			fmt.Printf("Job %s %s failed to much time \n", jobResult.job.JobDefinitionName, job.ID)
 		}
 	}
 }
@@ -146,7 +146,6 @@ func (s *Server) Run() error {
 			s.handleWorkerDone(jobResult)
 		case <-time.After(1 * time.Second):
 			s.consumeJob()
-			fmt.Println("timeout 1")
 		case <-term:
 			fmt.Println("Gracefully shutting kick server")
 			s.queue.Close()

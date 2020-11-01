@@ -48,7 +48,6 @@ func (f *Fetcher) fetchJobs(s *Server) {
 			i := 0
 			for i < count {
 				res := f.redisClient.BRPopLPush(f.queue.name, f.queue.InprogressSetName(), 1*time.Second)
-				fmt.Println("fetch job")
 				bytes, err := res.Bytes()
 				if err == nil {
 					var job Job

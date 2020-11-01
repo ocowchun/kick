@@ -7,9 +7,6 @@ import (
 	"github.com/ocowchun/kick"
 )
 
-type Fib struct {
-}
-
 func doFib(num int) int {
 	if num <= 1 {
 		return 1
@@ -18,24 +15,38 @@ func doFib(num int) int {
 	}
 }
 
-func (f *Fib) Name() string {
-	return "Fib"
-}
-
-func (f *Fib) Perform(arguments interface{}) error {
-	num := arguments.(int)
+func fibPerform(arguments interface{}) error {
+	num := int(arguments.(float64))
 	result := doFib(num)
 	fmt.Printf("Complete job %d  result: %d\n", num, result)
 	return nil
 }
 
-func (f *Fib) RetryAt(retryCount int) (bool, time.Duration) {
-	return false, time.Duration(0)
+func sleepPerform(arguments interface{}) error {
+	num := int(arguments.(float64))
+	seconds := time.Duration(num) * time.Second
+	time.Sleep(seconds)
+	return nil
 }
 
 func main() {
-	job := &Fib{}
-	s := kick.NewServer(2, []kick.JobDefinition{job})
-	s.Enqueue(job.Name(), 15)
+	fibJobDefinition := kick.NewJobDefinition("Fib", fibPerform, nil)
+	sleepJobDefinition := kick.NewJobDefinition("Sleep", sleepPerform, nil)
+	config := &kick.ServerConfiguration{
+		WorkerCount: 2,
+		RedisURL:    "localhost:63790",
+	}
+	s := kick.NewServer(config, []*kick.JobDefinition{fibJobDefinition, sleepJobDefinition})
+	s.Enqueue("Fib", 12)
+	s.Enqueue("Fib", 13)
+	s.Enqueue("Fib", 14)
+	s.Enqueue("Fib", 15)
+	s.EnqueueAt(3*time.Second, "Fib", 18)
+	s.Enqueue("Sleep", 3)
+	s.Enqueue("Sleep", 4)
+	s.Enqueue("Sleep", 4)
+	s.Enqueue("Sleep", 4)
+	s.Enqueue("Sleep", 4)
+
 	s.Run()
 }
