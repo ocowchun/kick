@@ -37,16 +37,10 @@ func main() {
 		RedisURL:    "localhost:63790",
 	}
 	s := kick.NewServer(config, []*kick.JobDefinition{fibJobDefinition, sleepJobDefinition})
-	s.Enqueue("Fib", 12)
+
 	s.Enqueue("Fib", 13)
 	s.Enqueue("Fib", 14)
 	s.Enqueue("Fib", 15)
-	s.EnqueueAt(3*time.Second, "Fib", 18)
-	s.Enqueue("Sleep", 3)
-	s.Enqueue("Sleep", 4)
-	s.Enqueue("Sleep", 4)
-	s.Enqueue("Sleep", 4)
-	s.Enqueue("Sleep", 4)
 
 	s.Run()
 }

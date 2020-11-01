@@ -22,11 +22,12 @@ type JobResult struct {
 type Server struct {
 	jobs             []Job
 	isRunning        bool
-	idleWorkers      []*Worker
+	workers          []*Worker
 	workerDone       chan *JobResult
 	jobDefinitionMap map[string]*JobDefinition
 	redisClient      *redis.Client
 	queue            *Queue
+	workerReady      chan bool
 }
 
 type ServerConfiguration struct {
@@ -35,11 +36,16 @@ type ServerConfiguration struct {
 }
 
 func NewServer(config *ServerConfiguration, jobDefinitions []*JobDefinition) *Server {
+	jobDefinitionMap := map[string]*JobDefinition{}
+	for _, jobDefinition := range jobDefinitions {
+		jobDefinitionMap[jobDefinition.Name()] = jobDefinition
+	}
+
 	i := 0
-	idleWorkers := []*Worker{}
+	workers := []*Worker{}
 	workerDone := make(chan *JobResult)
 	for i < config.WorkerCount {
-		idleWorkers = append(idleWorkers, NewWorker(workerDone))
+		workers = append(workers, NewWorker(workerDone, jobDefinitionMap))
 		i++
 	}
 
@@ -48,19 +54,16 @@ func NewServer(config *ServerConfiguration, jobDefinitions []*JobDefinition) *Se
 		DB:   0, // use default DB
 	})
 
-	jobDefinitionMap := map[string]*JobDefinition{}
-	for _, jobDefinition := range jobDefinitions {
-		jobDefinitionMap[jobDefinition.Name()] = jobDefinition
-	}
 	queue := NewQueue("defaultQueue", redisClient)
 
 	return &Server{
 		isRunning:        false,
-		idleWorkers:      idleWorkers,
+		workers:          workers,
 		workerDone:       workerDone,
 		jobDefinitionMap: jobDefinitionMap,
 		redisClient:      redisClient,
 		queue:            queue,
+		workerReady:      make(chan bool),
 	}
 }
 
@@ -89,28 +92,9 @@ func (s *Server) EnqueueAt(duration time.Duration, jobDefinitionName string, arg
 	return s.queue.EnqueueJob(now.Add(duration), &job)
 }
 
-func (s *Server) consumeJob() error {
-	for len(s.idleWorkers) > 0 && len(s.jobs) > 0 {
-		worker, idleWorkers := s.idleWorkers[0], s.idleWorkers[1:]
-		s.idleWorkers = idleWorkers
-		job, jobs := s.jobs[0], s.jobs[1:]
-		s.jobs = jobs
-
-		jobDefinition := s.jobDefinitionMap[job.JobDefinitionName]
-		if jobDefinition == nil {
-			fmt.Printf("Can't find job definition %s", job.JobDefinitionName)
-		} else {
-			perform := jobDefinition.Perform
-			go worker.Run(perform, &job)
-		}
-	}
-	return nil
-}
-
 func (s *Server) handleWorkerDone(jobResult *JobResult) {
 	maxRetryCount := 3
 
-	s.idleWorkers = append(s.idleWorkers, jobResult.worker)
 	if jobResult.completed {
 		fmt.Printf("Complete job %s %s\n", jobResult.job.JobDefinitionName, jobResult.job.ID)
 		s.queue.RemoveJobFromInprogress(jobResult.job)
@@ -135,22 +119,30 @@ func (s *Server) Run() error {
 	fmt.Println("kick server starting...")
 
 	s.isRunning = true
-	shouldStop := false
-	s.queue.Run(s)
+
+	jobs := make(chan *Job)
+	s.queue.Run(s, jobs)
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, os.Interrupt, syscall.SIGTERM)
 
-	for !shouldStop {
+	for _, worker := range s.workers {
+		go worker.Run(jobs)
+	}
+
+	s.workerReady <- true
+	for {
 		select {
 		case jobResult := <-s.workerDone:
 			s.handleWorkerDone(jobResult)
-		case <-time.After(1 * time.Second):
-			s.consumeJob()
+			s.workerReady <- true
 		case <-term:
 			fmt.Println("Gracefully shutting kick server")
 			s.queue.Close()
+			close(s.workerDone)
+			for _, w := range s.workers {
+				w.Close()
+			}
 			return nil
 		}
 	}
-	return nil
 }

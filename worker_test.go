@@ -8,13 +8,19 @@ import (
 
 func TestWorkerRun(t *testing.T) {
 	workerDone := make(chan *JobResult)
-	worker := NewWorker(workerDone)
+	jobDefinitionMap := map[string]*JobDefinition{}
 	perform := func(arguments interface{}) error {
 		return nil
 	}
-	job := &Job{}
+	jobDefinitionMap["testing"] = NewJobDefinition("testing", perform, nil)
+	worker := NewWorker(workerDone, jobDefinitionMap)
+	job := &Job{
+		JobDefinitionName: "testing",
+	}
+	ch := make(chan *Job)
 
-	go worker.Run(perform, job)
+	go worker.Run(ch)
+	ch <- job
 
 	result := <-workerDone
 	if result.err != nil {
@@ -27,18 +33,24 @@ func TestWorkerRun(t *testing.T) {
 
 func TestWorkerRunWithError(t *testing.T) {
 	workerDone := make(chan *JobResult)
-	worker := NewWorker(workerDone)
+	jobDefinitionMap := map[string]*JobDefinition{}
 	err := errors.New("testing error")
 	perform := func(arguments interface{}) error {
 		return err
 	}
-	job := &Job{}
+	jobDefinitionMap["testing"] = NewJobDefinition("testing", perform, nil)
+	worker := NewWorker(workerDone, jobDefinitionMap)
+	job := &Job{
+		JobDefinitionName: "testing",
+	}
+	ch := make(chan *Job)
 
-	go worker.Run(perform, job)
+	go worker.Run(ch)
+	ch <- job
 
 	result := <-workerDone
-	if result.err == nil {
-		t.Errorf("result.err should not be nil")
+	if result.err != err {
+		t.Errorf("expect result.err = %s but get %s", err, result.err)
 	}
 	if result.completed != false {
 		t.Errorf("Expected completed = false but get true")
@@ -47,16 +59,22 @@ func TestWorkerRunWithError(t *testing.T) {
 
 func TestWorkerRunWithPanic(t *testing.T) {
 	workerDone := make(chan *JobResult)
-	worker := NewWorker(workerDone)
+	jobDefinitionMap := map[string]*JobDefinition{}
 	err := errors.New("testing error")
 	perform := func(arguments interface{}) error {
 		a := arguments.(int)
 		fmt.Println(a)
 		return err
 	}
-	job := &Job{}
+	jobDefinitionMap["testing"] = NewJobDefinition("testing", perform, nil)
+	worker := NewWorker(workerDone, jobDefinitionMap)
+	job := &Job{
+		JobDefinitionName: "testing",
+	}
+	ch := make(chan *Job)
 
-	go worker.Run(perform, job)
+	go worker.Run(ch)
+	ch <- job
 
 	result := <-workerDone
 	if result.err == nil {

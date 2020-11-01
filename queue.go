@@ -26,41 +26,40 @@ func NewFetcher(queue *Queue) *Fetcher {
 	}
 }
 
-func (f *Fetcher) Run(s *Server) {
+func (f *Fetcher) Run(s *Server, jobs chan *Job) {
 	f.Add(1)
-	go f.fetchJobs(s)
+	go f.fetchJobs(s, jobs)
 }
 
 func (f *Fetcher) Close() {
 	f.stopFetch <- true
 }
 
-func (f *Fetcher) fetchJobs(s *Server) {
+func (f *Fetcher) fetchJobs(s *Server, jobs chan *Job) {
 	for {
 		select {
 		case <-f.stopFetch:
 			fmt.Println("Gracefully shutting fetcher")
 			f.Done()
 			return
-		case <-time.After(1 * time.Second):
-			fmt.Println("fetchJobs")
-			count := len(s.idleWorkers)
-			i := 0
-			for i < count {
-				res := f.redisClient.BRPopLPush(f.queue.name, f.queue.InprogressSetName(), 1*time.Second)
-				bytes, err := res.Bytes()
-				if err == nil {
-					var job Job
-					err = json.Unmarshal(bytes, &job)
-					if err != nil {
-						fmt.Println("error:", err)
-					} else {
-						s.jobs = append(s.jobs, job)
-					}
-				}
-				i++
-			}
 
+		// case <-time.After(1 * time.Second):
+
+		case <-s.workerReady:
+			fmt.Println("fetchJobs")
+			res := f.redisClient.BRPopLPush(f.queue.name, f.queue.InprogressSetName(), 1*time.Second)
+			bytes, err := res.Bytes()
+			if err == nil {
+				var job Job
+				err = json.Unmarshal(bytes, &job)
+				if err != nil {
+					fmt.Println("error:", err)
+				} else {
+					fmt.Println("before queue job")
+					jobs <- &job
+					fmt.Println("after queue job")
+				}
+			}
 		}
 	}
 }
@@ -127,12 +126,14 @@ type Queue struct {
 	poller      *Poller
 	redisClient *redis.Client
 	name        string
+	jobReady    chan bool
 }
 
 func NewQueue(name string, redisClient *redis.Client) *Queue {
 	queue := &Queue{
 		name:        name,
 		redisClient: redisClient,
+		jobReady:    make(chan bool),
 	}
 	queue.fetcher = NewFetcher(queue)
 	queue.poller = NewPoller(queue)
@@ -147,8 +148,8 @@ func (q *Queue) ScheduledSetName() string {
 	return q.name + "::ScheduledSet"
 }
 
-func (q *Queue) Run(server *Server) {
-	q.fetcher.Run(server)
+func (q *Queue) Run(server *Server, jobs chan *Job) {
+	q.fetcher.Run(server, jobs)
 	q.poller.Run()
 }
 
