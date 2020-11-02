@@ -32,15 +32,21 @@ func sleepPerform(arguments interface{}) error {
 func main() {
 	fibJobDefinition := kick.NewJobDefinition("Fib", fibPerform, nil)
 	sleepJobDefinition := kick.NewJobDefinition("Sleep", sleepPerform, nil)
+	jobDefinitions := []*kick.JobDefinition{fibJobDefinition, sleepJobDefinition}
+	redisURL := "localhost:63790"
+	c := kick.NewClient(redisURL, jobDefinitions)
+
+	c.Enqueue("Fib", 13)
+	c.Enqueue("Fib", 14)
+	c.Enqueue("Fib", 15)
+	c.Enqueue("Sleep", 3)
+	c.Enqueue("Sleep", 3)
+	c.EnqueueAt((3 * time.Second), "Fib", 20)
+
 	config := &kick.ServerConfiguration{
 		WorkerCount: 2,
-		RedisURL:    "localhost:63790",
+		RedisURL:    redisURL,
 	}
-	s := kick.NewServer(config, []*kick.JobDefinition{fibJobDefinition, sleepJobDefinition})
-
-	s.Enqueue("Fib", 13)
-	s.Enqueue("Fib", 14)
-	s.Enqueue("Fib", 15)
-
+	s := kick.NewServer(config, jobDefinitions)
 	s.Run()
 }

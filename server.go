@@ -6,10 +6,8 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/go-redis/redis"
-	"github.com/google/uuid"
 )
 
 type JobResult struct {
@@ -27,6 +25,8 @@ type Server struct {
 	jobDefinitionMap map[string]*JobDefinition
 	redisClient      *redis.Client
 	queue            *Queue
+	fetcher          *Fetcher
+	poller           *Poller
 	workerReady      chan bool
 }
 
@@ -64,32 +64,9 @@ func NewServer(config *ServerConfiguration, jobDefinitions []*JobDefinition) *Se
 		redisClient:      redisClient,
 		queue:            queue,
 		workerReady:      make(chan bool),
+		fetcher:          NewFetcher(queue),
+		poller:           NewPoller(queue),
 	}
-}
-
-func (s *Server) Enqueue(jobDefinitionName string, arguments interface{}) error {
-	return s.EnqueueAt(0*time.Second, jobDefinitionName, arguments)
-}
-
-func (s *Server) EnqueueAt(duration time.Duration, jobDefinitionName string, arguments interface{}) error {
-
-	jobDefinition := s.jobDefinitionMap[jobDefinitionName]
-	if jobDefinition == nil {
-		return fmt.Errorf("Can't find job definition name `%s`", jobDefinitionName)
-	}
-	queueName := "defaultQueue"
-	now := time.Now()
-	retry, _ := jobDefinition.RetryAt(0)
-	job := Job{
-		ID:                uuid.New(),
-		Retry:             retry,
-		CreatedAt:         now,
-		EnqueuedAt:        now,
-		JobDefinitionName: jobDefinitionName,
-		Arguments:         arguments,
-		QueueName:         queueName,
-	}
-	return s.queue.EnqueueJob(now.Add(duration), &job)
 }
 
 func (s *Server) handleWorkerDone(jobResult *JobResult) {
@@ -121,7 +98,9 @@ func (s *Server) Run() error {
 	s.isRunning = true
 
 	jobs := make(chan *Job)
-	s.queue.Run(s, jobs)
+	s.fetcher.Run(s, jobs)
+	s.poller.Run()
+
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, os.Interrupt, syscall.SIGTERM)
 
@@ -137,7 +116,11 @@ func (s *Server) Run() error {
 			s.workerReady <- true
 		case <-term:
 			fmt.Println("Gracefully shutting kick server")
-			s.queue.Close()
+			go s.fetcher.Close()
+			go s.poller.Close()
+			s.fetcher.Wait()
+			s.poller.Wait()
+
 			close(s.workerDone)
 			for _, w := range s.workers {
 				w.Close()
