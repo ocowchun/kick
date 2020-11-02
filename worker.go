@@ -23,13 +23,15 @@ func NewWorker(workerDone chan *JobResult, jobDefinitionMap map[string]*JobDefin
 	}
 }
 
-func (w *Worker) Run(jobs chan *Job) {
+func (w *Worker) Run(jobs chan *Job, workerReady chan bool) {
 	fmt.Printf("Worker %s starts running...\n", w.ID)
 	for {
 		select {
 		case <-w.shouldClose:
 			fmt.Printf("Gracefully shutting worker %s\n", w.ID)
 			return
+		case workerReady <- true:
+
 		case job := <-jobs:
 			jobDefinition := w.jobDefinitionMap[job.JobDefinitionName]
 			result := &JobResult{

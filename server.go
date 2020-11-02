@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/go-redis/redis"
 )
@@ -27,7 +28,6 @@ type Server struct {
 	queue            *Queue
 	fetcher          *Fetcher
 	poller           *Poller
-	workerReady      chan bool
 }
 
 type ServerConfiguration struct {
@@ -63,7 +63,6 @@ func NewServer(config *ServerConfiguration, jobDefinitions []*JobDefinition) *Se
 		jobDefinitionMap: jobDefinitionMap,
 		redisClient:      redisClient,
 		queue:            queue,
-		workerReady:      make(chan bool),
 		fetcher:          NewFetcher(queue),
 		poller:           NewPoller(queue),
 	}
@@ -71,16 +70,21 @@ func NewServer(config *ServerConfiguration, jobDefinitions []*JobDefinition) *Se
 
 func (s *Server) handleWorkerDone(jobResult *JobResult) {
 	maxRetryCount := 3
+	s.queue.RemoveJobFromInprogress(jobResult.job)
 
 	if jobResult.completed {
 		fmt.Printf("Complete job %s %s\n", jobResult.job.JobDefinitionName, jobResult.job.ID)
-		s.queue.RemoveJobFromInprogress(jobResult.job)
 	} else {
 		job := jobResult.job
 
-		fmt.Printf("Failed job %s %s\n", jobResult.job.JobDefinitionName, job.ID)
+		fmt.Printf("Failed job %s %s\n", job.JobDefinitionName, job.ID)
 		if job.Retry && job.RetryCount < maxRetryCount {
-			s.queue.RemoveJobFromInprogress(jobResult.job)
+			job.RetryCount++
+			retry, d := s.jobDefinitionMap[job.JobDefinitionName].RetryAt(job.RetryCount)
+			if retry {
+				job.EnqueuedAt = time.Now().Add(d)
+				s.queue.EnqueueJob(job.EnqueuedAt, job)
+			}
 		} else if job.RetryCount == maxRetryCount {
 			fmt.Printf("Job %s %s failed to much time \n", jobResult.job.JobDefinitionName, job.ID)
 		}
@@ -98,22 +102,21 @@ func (s *Server) Run() error {
 	s.isRunning = true
 
 	jobs := make(chan *Job)
-	s.fetcher.Run(s, jobs)
+	workerReady := make(chan bool)
+	s.fetcher.Run(jobs, workerReady)
 	s.poller.Run()
 
 	term := make(chan os.Signal, 1)
 	signal.Notify(term, os.Interrupt, syscall.SIGTERM)
 
 	for _, worker := range s.workers {
-		go worker.Run(jobs)
+		go worker.Run(jobs, workerReady)
 	}
 
-	s.workerReady <- true
 	for {
 		select {
 		case jobResult := <-s.workerDone:
 			s.handleWorkerDone(jobResult)
-			s.workerReady <- true
 		case <-term:
 			fmt.Println("Gracefully shutting kick server")
 			go s.fetcher.Close()

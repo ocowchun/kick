@@ -1,6 +1,9 @@
 package kick
 
-import "time"
+import (
+	"math"
+	"time"
+)
 
 type JobDefinition struct {
 	name    string
@@ -9,7 +12,7 @@ type JobDefinition struct {
 }
 
 func defaultRetryAt(retryCount int) (bool, time.Duration) {
-	return false, time.Duration(0)
+	return true, time.Duration(math.Pow(2, float64(retryCount))) * time.Second
 }
 
 func NewJobDefinition(name string, perform func(arguments interface{}) error, retryAt func(retryCount int) (bool, time.Duration)) *JobDefinition {

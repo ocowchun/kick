@@ -17,10 +17,11 @@ func TestWorkerRun(t *testing.T) {
 	job := &Job{
 		JobDefinitionName: "testing",
 	}
-	ch := make(chan *Job)
+	jobs := make(chan *Job)
+	workerReady := make(chan bool)
 
-	go worker.Run(ch)
-	ch <- job
+	go worker.Run(jobs, workerReady)
+	jobs <- job
 
 	result := <-workerDone
 	if result.err != nil {
@@ -43,10 +44,11 @@ func TestWorkerRunWithError(t *testing.T) {
 	job := &Job{
 		JobDefinitionName: "testing",
 	}
-	ch := make(chan *Job)
+	jobs := make(chan *Job)
+	workerReady := make(chan bool)
 
-	go worker.Run(ch)
-	ch <- job
+	go worker.Run(jobs, workerReady)
+	jobs <- job
 
 	result := <-workerDone
 	if result.err != err {
@@ -71,10 +73,11 @@ func TestWorkerRunWithPanic(t *testing.T) {
 	job := &Job{
 		JobDefinitionName: "testing",
 	}
-	ch := make(chan *Job)
+	jobs := make(chan *Job)
+	workerReady := make(chan bool)
 
-	go worker.Run(ch)
-	ch <- job
+	go worker.Run(jobs, workerReady)
+	jobs <- job
 
 	result := <-workerDone
 	if result.err == nil {

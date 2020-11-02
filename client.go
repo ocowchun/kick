@@ -49,7 +49,7 @@ func (c *Client) EnqueueAt(duration time.Duration, jobDefinitionName string, arg
 		ID:                uuid.New(),
 		Retry:             retry,
 		CreatedAt:         now,
-		EnqueuedAt:        now,
+		EnqueuedAt:        now.Add(duration),
 		JobDefinitionName: jobDefinitionName,
 		Arguments:         arguments,
 		QueueName:         c.queue.name,

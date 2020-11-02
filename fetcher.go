@@ -26,23 +26,23 @@ func NewFetcher(queue *Queue) *Fetcher {
 	}
 }
 
-func (f *Fetcher) Run(s *Server, jobs chan *Job) {
+func (f *Fetcher) Run(jobs chan *Job, workerReady chan bool) {
 	f.Add(1)
-	go f.fetchJobs(s, jobs)
+	go f.fetchJobs(jobs, workerReady)
 }
 
 func (f *Fetcher) Close() {
 	f.stopFetch <- true
 }
 
-func (f *Fetcher) fetchJobs(s *Server, jobs chan *Job) {
+func (f *Fetcher) fetchJobs(jobs chan *Job, workerReady chan bool) {
 	for {
 		select {
 		case <-f.stopFetch:
 			fmt.Println("Gracefully shutting fetcher")
 			f.Done()
 			return
-		case <-s.workerReady:
+		case <-workerReady:
 			res := f.redisClient.BRPopLPush(f.queue.name, f.queue.InprogressSetName(), 1*time.Second)
 			bytes, err := res.Bytes()
 			if err == nil {
