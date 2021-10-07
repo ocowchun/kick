@@ -124,7 +124,6 @@ func (s *Server) Run() error {
 			s.fetcher.Wait()
 			s.poller.Wait()
 
-			close(s.workerDone)
 			for _, w := range s.workers {
 				w.Close()
 			}

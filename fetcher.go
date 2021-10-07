@@ -43,6 +43,7 @@ func (f *Fetcher) fetchJobs(jobs chan *Job, workerReady chan bool) {
 			f.Done()
 			return
 		case <-workerReady:
+			fmt.Println("Receive workerReady signal")
 			res := f.redisClient.BRPopLPush(f.queue.name, f.queue.InprogressSetName(), 1*time.Second)
 			bytes, err := res.Bytes()
 			if err == nil {

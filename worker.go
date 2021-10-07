@@ -11,7 +11,7 @@ type Worker struct {
 	ID               uuid.UUID
 	workerDone       chan *JobResult
 	jobDefinitionMap map[string]*JobDefinition
-	shouldClose      chan bool
+	close            chan bool
 }
 
 func NewWorker(workerDone chan *JobResult, jobDefinitionMap map[string]*JobDefinition) *Worker {
@@ -19,7 +19,7 @@ func NewWorker(workerDone chan *JobResult, jobDefinitionMap map[string]*JobDefin
 		ID:               uuid.New(),
 		workerDone:       workerDone,
 		jobDefinitionMap: jobDefinitionMap,
-		shouldClose:      make(chan bool),
+		close:            make(chan bool),
 	}
 }
 
@@ -27,10 +27,11 @@ func (w *Worker) Run(jobs chan *Job, workerReady chan bool) {
 	fmt.Printf("Worker %s starts running...\n", w.ID)
 	for {
 		select {
-		case <-w.shouldClose:
+		case <-w.close:
 			fmt.Printf("Gracefully shutting worker %s\n", w.ID)
 			return
 		case workerReady <- true:
+			fmt.Printf("Send workerReady signal from %s \n", w.ID)
 
 		case job := <-jobs:
 			jobDefinition := w.jobDefinitionMap[job.JobDefinitionName]
@@ -54,7 +55,7 @@ func (w *Worker) Run(jobs chan *Job, workerReady chan bool) {
 }
 
 func (w *Worker) Close() {
-	w.shouldClose <- true
+	w.close <- true
 }
 
 func runPerform(perform func(arguments interface{}) error, arguments interface{}) (err error) {

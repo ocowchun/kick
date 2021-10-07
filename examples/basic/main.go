@@ -37,11 +37,11 @@ func main() {
 	c := kick.NewClient(redisURL, jobDefinitions)
 
 	c.Enqueue("Fib", 13)
-	c.Enqueue("Fib", 14)
-	c.Enqueue("Fib", 15)
-	c.Enqueue("Sleep", 3)
-	c.Enqueue("Sleep", 3)
-	c.EnqueueAt((3 * time.Second), "Fib", 20)
+	// c.Enqueue("Fib", 14)
+	// c.Enqueue("Fib", 15)
+	// c.Enqueue("Sleep", 3)
+	// c.Enqueue("Sleep", 3)
+	// c.EnqueueAt((3 * time.Second), "Fib", 20)
 
 	config := &kick.ServerConfiguration{
 		WorkerCount: 2,
